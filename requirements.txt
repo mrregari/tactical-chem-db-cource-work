@@ -1,0 +1,4 @@
+# Runtime dependency for SS14 YAML prototype parsing.
+PyYAML>=6.0.2,<7.0
+# Optional: Pillow is only needed for the standalone sprite extraction mode,
+# not for `--chemistry-only` used by Laravel.

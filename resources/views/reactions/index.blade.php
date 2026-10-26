@@ -1,0 +1,8 @@
+@extends('layouts.app')
+@section('title', 'Калькулятор рецептов')
+@section('content')
+<section class="hero"><div class="eyebrow">[03] // ХИМИЧЕСКИЙ КАЛЬКУЛЯТОР</div><h1>Рассчитать рецепт_</h1><p class="lead">Количество ингредиентов указано на одну единицу готового реагента. Расчёт ограничен выбранным источником: {{ $selectedSourceLabel ?? 'все форки' }}.</p></section>
+<div class="section-heading"><h2>Параметры реакции</h2>@if(auth()->check() && auth()->user()->role !== 'guest') <a class="button button-outline" href="{{ route('reactions.create') }}">+ Предложить рецепт</a> @endif</div>
+<form class="panel form-panel" action="{{ route('reactions.index') }}" method="GET"><label>Результат <select name="reagent" required><option value="">Выберите реагент</option>@foreach($reagents as $reagent)<option value="{{ $reagent->id }}" @selected($selected?->id === $reagent->id)>{{ $reagent->name }}</option>@endforeach</select></label><label>Желаемый объём <input name="quantity" type="number" min="0.01" max="10000" step="0.01" value="{{ old('quantity', $quantity) }}" required></label><button class="button" type="submit">Рассчитать →</button></form>
+@if($selected)<section class="panel form-panel"><div class="eyebrow">РЕЗУЛЬТАТ // {{ $selected->name }}</div>@if($reaction)<h2>{{ $reaction->name }}</h2><p class="muted">Для {{ $quantity }} ед. продукта потребуется:</p><ul class="list">@foreach($ingredients as $ingredient)<li>{{ $ingredient['name'] }} — <strong>{{ $ingredient['quantity'] }} ед.</strong></li>@endforeach</ul>@else <p>Опубликованного рецепта пока нет.</p>@endif</section>@endif
+@endsection

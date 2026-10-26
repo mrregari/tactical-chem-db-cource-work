@@ -1,0 +1,8 @@
+@extends('layouts.app')
+@section('title', 'Ботаника')
+@section('content')
+<section class="hero compact-hero"><div class="eyebrow">[05] // HYDROPONICS LAB</div><h1>Ботаника<span class="accent">_</span></h1><p class="lead">Поиск химикатов по эффектам на растения. Источник ботаники настраивается отдельно в правой панели.</p></section>
+<form class="toolbar" method="GET"><label>ПОИСК ПО РЕАГЕНТУ И ЭФФЕКТУ<input type="search" name="q" value="{{ $q }}" placeholder="Мутация, рост, сорняки, здоровье…"></label><button class="button" type="submit">Искать</button>@if($q)<a class="button button-outline" href="{{ route('tools.botany') }}">Сбросить</a>@endif</form>
+<div class="tool-callout"><strong>Как читать результаты</strong><span>Эффекты отображаются из данных реагента, загруженных из прототипов SS14. Если в исходном JSON нет подробных полей ботаники, карточка не будет выдумывать значения.</span></div>
+<div class="grid">@forelse($reagents as $reagent)<a class="card" href="{{ route('reagents.show', $reagent) }}"><div class="card-top"><span class="tag">{{ $reagent->category?->name ?? 'Реагент' }}</span><span class="color-dot" style="background:{{ $reagent->color ?: '#7bd6df' }}"></span></div><h3>{{ $reagent->name }} ↗</h3><p>{{ Str::limit($reagent->description, 160) }}</p>@if($reagent->effects)<div class="effect-chip">{{ Str::limit($reagent->effects, 220) }}</div>@endif</a>@empty<div class="panel empty-state"><h3>Подходящие данные не найдены</h3><p>В выбранном форке нет реагентов, помеченных ботаническими эффектами в импортированных полях. Попробуй общий каталог или другой форк.</p></div>@endforelse</div><div class="pagination">{{ $reagents->links() }}</div>
+@endsection

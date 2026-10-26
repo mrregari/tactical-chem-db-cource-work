@@ -1,0 +1,480 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 MikameO
+# This file is part of Space Station Recipes.
+# See LICENSE for details.
+
+"""
+Source Attribution Catalog (Increment G)
+
+Each curated claim in config.py (ANTAG_DATA[id].tips, ANTAG_STRATEGIES[i].desc)
+should cite its origin so readers can judge the authority of the claim themselves.
+Without attribution, any free-text assertion is "curator says so" — which is
+exactly the gap that forum critics (gobbygobbler, Testicular_Man) exposed.
+
+Usage
+-----
+Curated entries reference catalog IDs as plain strings:
+
+    "sources": ["code-pyro-thermite", "forum-testicular-thermite-walls-2024"]
+
+Or inline ad-hoc objects for one-off notes:
+
+    "sources": [
+        {"type": "maintainer-test", "note": "Playtested 2025-11-01, confirmed pry",
+         "date": "2025-11-01"}
+    ]
+
+Both forms are validated by `validate_source_refs` during extractor build.
+
+Authority ladder
+----------------
+The `AUTHORITY_WEIGHTS` table is centralized (not per-entry) to prevent gaming
+— a contributor cannot inflate their own forum post's weight by editing the
+entry; weight is derived from `type`.
+
+Aggregation rule is MAX (not sum): a single code reference outweighs ten weak
+forum posts. Otherwise lazy speculation could drown out authoritative evidence.
+
+Separate file from config.py because config.py is already 1059 lines and
+catalog entries will grow (one per forum thread, one per YAML line cited).
+Separation of concerns: config.py = "what to render", sources.py = "what backs
+it up". Drive-by contributors can PR sources.py in isolation.
+"""
+
+# ─────────────────────────────────────────────
+# Authority ladder (type → weight, 0-10)
+# ─────────────────────────────────────────────
+# Rationale for gaps:
+#   code(10) vs maintainer-test(9): maintainer-test is reproducible but subjective;
+#     code wins in conflict ("yaml says X, maintainer says Y" → X).
+#   forum-consensus(7) vs wiki(5): three aligned forum posts outrank a single wiki
+#     page that may be outdated. Wiki still beats single forum-post(4).
+#   forum-post(4) = video(4): both single-author, both informal.
+#   maintainer-knowledge(2): honest placeholder for "I know it from playtime but
+#     can't cite a specific source" — better than silence, worse than anything
+#     verifiable. UI shows it in amber/claim tier.
+#   speculation(1): explicit "needs verification" marker. Rendered red in UI
+#     with a prompt for community PRs.
+
+AUTHORITY_WEIGHTS = {
+    "code":                 10,
+    "maintainer-test":       9,
+    "forum-consensus":       7,
+    "wiki":                  5,
+    "forum-post":            4,
+    "video":                 4,
+    "maintainer-knowledge":  2,
+    "speculation":           1,
+}
+
+
+def authority_weight(entry: dict) -> int:
+    """Map a source entry to its numeric weight. Unknown types → 0."""
+    return AUTHORITY_WEIGHTS.get(entry.get("type", ""), 0)
+
+
+# ─────────────────────────────────────────────
+# Domain whitelist
+# ─────────────────────────────────────────────
+# Validators check URL host against this list. Unknown domains emit a WARNING
+# (non-fatal) so a maintainer must consciously expand the list via PR rather
+# than having malicious or ephemeral links slip through.
+
+ALLOWED_DOMAINS = (
+    "forum.spacestation14.com",
+    "github.com",
+    "raw.githubusercontent.com",
+    "youtube.com",
+    "youtu.be",
+    "twitch.tv",
+    "reddit.com",
+    "wiki.spacestation14.com",
+    "web.archive.org",
+)
+
+# ─────────────────────────────────────────────
+# The catalog
+# ─────────────────────────────────────────────
+# Naming convention: "<type-prefix>-<scope>-<topic>[-<year>]"
+# Examples:
+#   code-pyro-thermite           YAML line for Thermite reagent definition
+#   code-pyro-clf3-prytile       YAML line showing CLF3's PryTileReaction
+#   forum-gobby-lead-unobt-2025  Forum thread where gobbygobbler flagged Lead
+#   wiki-antag-chem-primer       Wiki page
+#   mk-general-antag-playtime    Honest placeholder for undocumented maintainer knowledge
+#
+# Every entry MUST have: type, title, note.
+# URL required except for maintainer-knowledge (by definition undocumented).
+# author required for forum-post / video.
+# date required except for maintainer-knowledge (ISO-8601 YYYY-MM-DD).
+# archive_url optional (link-rot fallback, must start with web.archive.org).
+# quote optional (≤200 char fragment, anti-context-stripping for forum cites).
+
+SOURCES = {
+    # ── Code references ──────────────────────────────────
+    "code-pyro-thermite": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/pyrotechnic.yml#L16-L37",
+        "title": "Thermite reagent (pyrotechnic.yml:17-37)",
+        "date": "2026-04-19",
+        "note": "Thermite's only tileReactions entry is FlammableTileReaction (x2 temperature multiplier). No wall-damage or pry effect exists — confirms Thermite does NOT breach walls in SS14.",
+    },
+    "code-pyro-clf3-prytile": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/pyrotechnic.yml#L100-L138",
+        "title": "ChlorineTrifluoride PryTileReaction (pyrotechnic.yml:109)",
+        "date": "2026-04-19",
+        "note": "ChlorineTrifluoride has PryTileReaction — the ONLY structural-damage tile reaction in vanilla SS14 chemistry. Backs the floor-pry strategy.",
+    },
+    "code-reagents-lead": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/toxins.yml",
+        "title": "Lead reagent in toxins.yml (no recipe, no plant, no dispenser)",
+        "date": "2026-04-19",
+        "note": "Searching the vanilla Reactions/ and Hydroponics/ folders for 'Lead' as a reaction product or seed chemical returns zero hits; Lead is defined as a reagent but not produced anywhere — confirming gobbygobbler's unobtainable claim for vanilla. UPDATE 2026-07-12 (D3 item-fill scan): ChemVendInventorySyndicate.contrabandInventory stocks ChemistryBottleLead x2 (30u) — the SyndieJuice chem vendor (AccessReader: SyndicateAgent) dispenses Lead bottles. No crew path still; classified antag-only, not unobtainable.",
+    },
+    "code-goob-licoxide-lead": {
+        "type": "code",
+        "url": "https://github.com/Goob-Station/Goob-Station/blob/master/Resources/Prototypes/_Goobstation/Recipes/Reactions/toxins.yml",
+        "title": "Goob Station's Licoxide recipe (Lead added as reactant)",
+        "date": "2026-04-19",
+        "note": "Per config.py FORK_REGISTRY[goob].modified_reactions: 'Licoxide: Added Lead(1) as extra reactant'. Note: Lead is an *input* even in Goob, so it remains unobtainable as a product — the Goob modification makes Licoxide HARDER, not Lead EASIER.",
+    },
+    "code-chemicals-chloral": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Recipes/Reactions/chemicals.yml",
+        "title": "Chloral Hydrate recipe (chemicals.yml)",
+        "date": "2026-04-19",
+        "note": "Chloral: Chlorine + Ethanol + Water (all three from Chemical Dispenser). Backs silent-kill and sedation-ambush strategies.",
+    },
+    "code-reagents-potassium-water": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Recipes/Reactions/chemicals.yml",
+        "title": "Potassium-Water exothermic explosion reaction",
+        "date": "2026-04-19",
+        "note": "K+H2O reaction in chemicals.yml produces an explosion via ChemExplosion with intensity 0.25 per unit, capped at 100. Backs mass-explosion strategy.",
+    },
+
+    # ── Increment J: new antag strategies (2026-04-21) ─────
+    "code-toxins-romerol": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/toxins.yml#L458-L475",
+        "title": "Romerol reagent (toxins.yml:458-475)",
+        "date": "2026-04-21",
+        "note": "Romerol triggers CauseZombieInfection at min 5u, worksOnTheDead: true, contrabandSeverity: Syndicate. No recipe in any of the 12 reaction YAMLs — uplink-only. Backs zombie-outbreak strategy.",
+    },
+    "code-toxins-hemorrhinol": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/toxins.yml#L766-L783",
+        "title": "Hemorrhinol reagent (toxins.yml:766-783)",
+        "date": "2026-04-21",
+        "note": "Hemorrhinol applies StatusEffectHemorrhage (7 bleed ticks, 21s) plus ModifyBleed amount 0.5. Backs bleed-drip strategy.",
+    },
+    "code-medicine-hemorrhinol-recipe": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Recipes/Reactions/medicine.yml#L677-L687",
+        "title": "Hemorrhinol recipe (medicine.yml:677-687)",
+        "date": "2026-04-21",
+        "note": "Heparin 2 + Razorium 2 + Plasma 1 → Hemorrhinol 2. Razorium itself is from CaninaseFelinaseReaction (fun.yml) — cross-dept via banana/lime juice.",
+    },
+    "code-narcotics-stimulants": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/narcotics.yml#L125-L210",
+        "title": "Stimulants reagent (narcotics.yml:125-210)",
+        "date": "2026-04-21",
+        "note": "Stimulants grant walk/sprint 1.25x, strip Stunned/Knockdown/Sleep, AdjustReagent ChloralHydrate -10 (purges sedatives). Backs stim-super-soldier self-buff strategy.",
+    },
+    "code-chemicals-stimulants-recipe": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Recipes/Reactions/chemicals.yml#L318-L330",
+        "title": "Stimulants recipe (chemicals.yml:318-330, minTemp 370)",
+        "date": "2026-04-21",
+        "note": "Ephedrine 1 + Vestine 1 + Oxygen 2 @ minTemp 370 → Stimulants 2. Vestine is contraband (plant-mutation path), temp requires heater setup.",
+    },
+    "code-rucm-speed-demon": {
+        "type": "code",
+        "url": "https://github.com/flex5hybrid/RussianCM/blob/master/Resources/Prototypes/_CMU14/Economy/Recipes/Reagents/drugs.yml#L1-L36",
+        "title": "AU14DrugSpeedDemon reagent (RuCM drugs.yml:1-36)",
+        "date": "2026-07-11",
+        "note": "Speed Demon: MovespeedModifier walk 1.3 / sprint 1.34, Narcotic metabolism 0.4, overdose 15, Poison 2/tick past 40u and 4/tick past 80u, AdjustReagent ChloralHydrate -10. Searching the fork's Reactions/ folders for AU14DrugSpeedDemon as a product returns zero hits — the drug has NO synthesis recipe.",
+    },
+    "code-rucm-speed-demon-sources": {
+        "type": "code",
+        "url": "https://github.com/flex5hybrid/RussianCM/blob/master/Resources/Prototypes/_CMU14/Roles/antags.yml",
+        "title": "AU14DrugDealerDrugBottle in RuCM antag loadouts (antags.yml)",
+        "date": "2026-07-11",
+        "note": "The Speed Demon pill bottle (5x15u pills) ships in the antag drug dealer loadout — the primary in-game acquisition path.",
+    },
+    "code-rucm-weyu-crate": {
+        "type": "code",
+        "url": "https://github.com/flex5hybrid/RussianCM/blob/master/Resources/Prototypes/_CMU14/Economy/Catalog/Fills/Crates/weyu_experiments.yml",
+        "title": "Speed Demon bottle in WeyU experiments crate (weyu_experiments.yml)",
+        "date": "2026-07-11",
+        "note": "Secondary acquisition path: the Weyland-Yutani experiments crate includes the Speed Demon pill bottle among its contents.",
+    },
+    "code-toxins-tazinide": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/toxins.yml#L668-L683",
+        "title": "Tazinide reagent (toxins.yml:668-683)",
+        "date": "2026-04-21",
+        "note": "Tazinide applies Electrocute effect at probability 0.5 per metabolism tick. Recipe in chemicals.yml: Licoxide + Vestine. Note: Licoxide's vanilla recipe is Lithium + Zinc (Goob adds Lead as extra reactant, making Licoxide harder there, not Lead easier).",
+    },
+    "code-chemicals-thermite-recipe": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Recipes/Reactions/chemicals.yml#L252-L263",
+        "title": "Thermite recipe (chemicals.yml:252-263, impact Medium)",
+        "date": "2026-04-21",
+        "note": "Iron 1 + Aluminium 1 + Oxygen 1 → Thermite 3. All dispenser-available. Backs thermite-breach strategy — despite SS13 folklore, Thermite in SS14 does NOT melt walls (see code-pyro-thermite), but its FlammableTileReaction x2 temperature makes it useful for burning through doors over time.",
+    },
+    "code-narcotics-teargas": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/narcotics.yml#L400-L458",
+        "title": "TearGas reagent (narcotics.yml:400-458)",
+        "date": "2026-04-21",
+        "note": "TearGas inflicts TemporaryBlindness (min 4u), Cough, and MovementSpeedModifier 0.65 over area. Marked allowedDepartments: [Security] — vanilla access requires Sec role or loot.",
+    },
+    "code-narcotics-happiness": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/narcotics.yml#L461-L500",
+        "title": "Happiness reagent (narcotics.yml:461-500)",
+        "date": "2026-04-21",
+        "note": "Happiness forces Laugh/Whistle/Crying emotes + Pax-style pacifism popups. Recipe in medicine.yml:624-637 — Laughter 2 + Epinephrine 1 + Ethanol 1 (+ Plasma 5 catalyst) → Happiness 4.",
+    },
+    "code-toxins-honk": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Reagents/toxins.yml#L573-L602",
+        "title": "Honk reagent (toxins.yml:573-602)",
+        "date": "2026-04-21",
+        "note": "Honk forces the Honk emote with force: true — target cannot suppress it. Combined with Happiness for coordinated clown-chaos radio/chat disruption.",
+    },
+    "code-fun-feline-canine": {
+        "type": "code",
+        "url": "https://github.com/space-wizards/space-station-14/blob/master/Resources/Prototypes/Recipes/Reactions/fun.yml",
+        "title": "CaninaseFelinaseReaction (fun.yml)",
+        "date": "2026-04-21",
+        "note": "Felinase + Caninase → Razorium 2 + Radioactive explosion (maxIntensity 5). Dual-purpose: area rad damage AND produces Razorium as a follow-up weapon for Hemorrhinol. Recipe chain for each enzyme is deeply nested (Haloperidol + Psicodine + CarpoToxin/Happiness + Enzyme).",
+    },
+
+    # ── Forum posts (the three critics who started this pack) ─────
+    "forum-gobby-killmix-2026": {
+        "type": "forum-post",
+        "url": "https://forum.spacestation14.com/",
+        "title": "gobbygobbler: kill-mix feedback calling out Lead unobtainable in antag strategies",
+        "author": "gobbygobbler",
+        "date": "2026-04-18",
+        "note": "Forum thread where gobbygobbler reports that 'easy' difficulty strategies use reagents that are 50% unobtainium or botany-coop. Confirmed true for slow-poison (Lead) in vanilla.",
+        "quote": "This 'easy' mix is 50% literal unobtainium and 50% chemical that is only accessible (in pure form) through cargo-botany cooperation.",
+    },
+    "forum-testicular-thermite-walls-2026": {
+        "type": "forum-post",
+        "url": "https://forum.spacestation14.com/",
+        "title": "Testicular_Man: thermite breaching is SS13-only, not present on any SS14 fork",
+        "author": "Testicular_Man",
+        "date": "2026-04-18",
+        "note": "Forum post stating that thermite wall-breach mechanic does not exist in SS14 and never has. Corroborated by direct YAML inspection (see code-pyro-thermite).",
+        "quote": "Pretty sure that thermite breaching is a 13 only thing, i've not seen it on any fork and god knows it would be the breaching meta for antags and crew alike if it did.",
+    },
+    "forum-steelclaw-thermite-forks-2026": {
+        "type": "forum-post",
+        "url": "https://forum.spacestation14.com/",
+        "title": "Steelclaw: asks which fork actually supports thermite wall-breach (expected: none)",
+        "author": "Steelclaw",
+        "date": "2026-04-18",
+        "note": "Forum post requesting per-fork clarification on thermite wall-breach — answer (confirmed by cross-fork YAML grep): no fork supports it. Motivated the per-fork filter UI in Increment D and the domain-whitelist design in Increment G.",
+        "quote": "I would request clarification on which forks that works on — it's not something I've ever heard of being a thing on Wizden.",
+    },
+
+    # ── Maintainer knowledge (honest placeholders) ─────────────
+    "mk-general-antag-playtime": {
+        "type": "maintainer-knowledge",
+        "title": "Documented from maintainer's SS14 playtime",
+        "date": "2026-04-19",
+        "note": "Original curator compiled these notes from personal playtime across multiple SS14 forks. Source is undocumented — community verification via PR is encouraged.",
+    },
+    "mk-shift-presets": {
+        "type": "maintainer-knowledge",
+        "title": "Shift-start preset curation from maintainer's playtime",
+        "date": "2026-07-12",
+        "note": "Reagent picks and amounts for the one-click shift-start presets (Batch Planner). Compiled from personal playtime; every reagent id is validated against extracted vanilla recipes at build time. Community tuning via PR is encouraged.",
+    },
+    "mk-species-guide": {
+        "type": "maintainer-knowledge",
+        "title": "Species physiology notes from maintainer's playtime",
+        "date": "2026-07-12",
+        "note": "Breathing gases and physiology quirks per playable species. Species/body prototypes are not part of the extraction manifest (yet) — unlike per-reagent organ conditions, which ARE extracted from reagent YAML. Corrections via PR encouraged.",
+    },
+    "mk-botany-mechanics": {
+        "type": "maintainer-knowledge",
+        "title": "Botany engine constants read off upstream C# (D7)",
+        "date": "2026-09-12",
+        "note": "Robust Harvest limits, tick/cycle timing, the potency-to-chemical formula and the health/endurance rules live in C#, which the extractor does not fetch. Read on 2026-09-12 from RobustHarvestEntityEffectSystem.cs and RobustHarvest.cs (PotencyLimit 50, PotencyIncrease 3, PotencySeedlessThreshold 30, 10% yield loss above the limit), PlantHolderComponent.cs (UpdateDelay 3s, CycleDelay 15s, MaxMutationLevel 25, MaxMutationMod 3), PlantHolderSystem.UpdateReagents (1 unit consumed per reagent per tick), BasePlantAdjustAttributeEntityEffect.cs (effects do not scale with quantity), BotanySystem.Produce.cs (clamp(Min + Potency/Divisor, Min, Max)), PlantGrowthSystem/PlantHolderSystem.Update (regen, old age), PlantDiethylamineEntityEffectSystem.cs (10% +1 endurance and +1 lifespan, uncapped) and PlantCryoxadoneEntityEffectSystem.cs. Which era text applies is decided by extracted data, not by this entry.",
+    },
+    "mk-botany-guide": {
+        "type": "maintainer-knowledge",
+        "title": "Cross-pollination / swab guide from maintainer's playtime",
+        "date": "2026-07-12",
+        "note": "The swab and mutation mechanics live in C# systems (MutationSystem, cross-pollination), not in YAML — unlike the mutation TARGET list, which is extracted from seed prototypes. The guide text is playtime knowledge; corrections via PR are encouraged.",
+    },
+}
+
+
+# ─────────────────────────────────────────────
+# Validation
+# ─────────────────────────────────────────────
+
+import re
+from urllib.parse import urlparse
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_REDDIT_SS14_RE = re.compile(r"^/r/SpaceStation14(/|$)", re.IGNORECASE)
+
+
+def _validate_url(url: str, allowed_gh_owners: set[str]) -> list[str]:
+    """Return list of warning strings for a URL. Empty list = clean."""
+    warnings = []
+    if not url:
+        return ["url is empty"]
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        return [f"unparseable URL: {exc}"]
+    host = (parsed.hostname or "").lower()
+
+    domain_ok = any(host == d or host.endswith("." + d) for d in ALLOWED_DOMAINS)
+    if not domain_ok:
+        warnings.append(f"host '{host}' not in ALLOWED_DOMAINS — add to whitelist via PR if intentional")
+
+    # github.com owner check
+    if host in ("github.com", "raw.githubusercontent.com"):
+        parts = [p for p in parsed.path.split("/") if p]
+        owner = parts[0] if parts else ""
+        if owner and owner not in allowed_gh_owners:
+            warnings.append(f"github owner '{owner}' not in allowed set")
+        # Branch-pinning hint
+        if "/blob/master/" in parsed.path or "/blob/main/" in parsed.path:
+            warnings.append("URL references a mutable branch (master/main); consider pinning to a commit SHA for link-rot resistance")
+
+    # reddit /r/SpaceStation14 scope
+    if host == "reddit.com" or host.endswith(".reddit.com"):
+        if not _REDDIT_SS14_RE.match(parsed.path):
+            warnings.append("reddit URL outside /r/SpaceStation14 scope")
+
+    # youtube embed rejection (use watch?v= form)
+    if host in ("youtube.com", "www.youtube.com") and "/embed/" in parsed.path:
+        warnings.append("youtube.com/embed/ URLs not accepted; use the standard /watch?v= form")
+
+    return warnings
+
+
+def _validate_entry(entry: dict, allowed_gh_owners: set[str]) -> list[str]:
+    """Validate a single source-entry dict. Returns warning strings."""
+    warnings = []
+    etype = entry.get("type", "")
+    if etype not in AUTHORITY_WEIGHTS:
+        warnings.append(f"type '{etype}' not in AUTHORITY_WEIGHTS")
+    if not entry.get("note"):
+        warnings.append("missing required field 'note'")
+    if not entry.get("title") and etype != "maintainer-knowledge":
+        warnings.append("missing required field 'title'")
+
+    url_required = etype not in ("maintainer-knowledge",)
+    if url_required and not entry.get("url"):
+        warnings.append(f"type '{etype}' requires field 'url'")
+    elif entry.get("url"):
+        warnings.extend(_validate_url(entry["url"], allowed_gh_owners))
+
+    if etype in ("forum-post", "video") and not entry.get("author"):
+        warnings.append(f"type '{etype}' requires field 'author'")
+
+    date = entry.get("date")
+    if date and not _ISO_DATE_RE.match(date):
+        warnings.append(f"date '{date}' not ISO-8601 YYYY-MM-DD")
+    if not date and etype != "maintainer-knowledge":
+        warnings.append(f"type '{etype}' requires field 'date' (ISO-8601)")
+
+    archive = entry.get("archive_url")
+    if archive and not archive.startswith("https://web.archive.org/web/"):
+        warnings.append(f"archive_url must start with https://web.archive.org/web/")
+
+    quote = entry.get("quote")
+    if quote and len(quote) > 200:
+        warnings.append(f"quote too long ({len(quote)} chars); fair-use limit is 200")
+
+    return warnings
+
+
+def validate_source_refs(
+    refs_owners: list[tuple[str, list]],
+    allowed_gh_owners: set[str] | None = None,
+    catalog: dict | None = None,
+) -> tuple[dict, list[str], list[str]]:
+    """Validate a list of (owner_label, source_refs_list) tuples.
+
+    Returns (coverage_summary, fatal_errors, warnings).
+    - owner_label: e.g. "ANTAG_DATA:Thermite" or "ANTAG_STRATEGIES:slow-poison"
+    - fatal_errors: unresolved string IDs (refer to missing catalog entries)
+    - warnings: domain mismatches, missing fields, date format, etc.
+    """
+    cat = catalog or SOURCES
+    owners_gh = allowed_gh_owners or set()
+
+    fatal = []
+    warn = []
+    attributed = 0
+    mk_only = 0
+    speculation_only = 0
+    needs_attribution = []
+    authority_sum = 0
+    authority_count = 0
+
+    for owner_label, refs in refs_owners:
+        if not refs:
+            needs_attribution.append(owner_label)
+            continue
+
+        resolved_entries = []
+        for ref in refs:
+            if isinstance(ref, str):
+                entry = cat.get(ref)
+                if entry is None:
+                    fatal.append(f"{owner_label}: unresolved source ID '{ref}'")
+                    continue
+                resolved_entries.append(entry)
+            elif isinstance(ref, dict):
+                resolved_entries.append(ref)
+            else:
+                warn.append(f"{owner_label}: unsupported ref type {type(ref).__name__}")
+
+        # Validate each resolved entry
+        for entry in resolved_entries:
+            for w in _validate_entry(entry, owners_gh):
+                warn.append(f"{owner_label}: {w}")
+
+        # Coverage classification
+        types = [e.get("type") for e in resolved_entries]
+        weights = [AUTHORITY_WEIGHTS.get(t, 0) for t in types]
+        if resolved_entries:
+            max_w = max(weights) if weights else 0
+            authority_sum += max_w
+            authority_count += 1
+            if all(t == "maintainer-knowledge" for t in types):
+                mk_only += 1
+            elif all(t == "speculation" for t in types):
+                speculation_only += 1
+            else:
+                attributed += 1
+
+    total = len(refs_owners)
+    coverage_pct = (100 * attributed // total) if total else 0
+    avg_authority = (authority_sum / authority_count) if authority_count else 0.0
+
+    summary = {
+        "total": total,
+        "attributed": attributed,
+        "maintainerKnowledgeOnly": mk_only,
+        "speculationOnly": speculation_only,
+        "needsAttribution": needs_attribution,
+        "coveragePercent": coverage_pct,
+        "avgAuthority": round(avg_authority, 2),
+    }
+    return summary, fatal, warn
